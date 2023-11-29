@@ -1,0 +1,354 @@
+<head>
+  <style>
+    body { margin: 0; }
+
+    #chart { 
+        width: 100%; 
+        height: 100%; 
+        position: absolute; 
+        z-index: 3;
+    }
+    #camera-feed { 
+        width: 100%; 
+        height: 100%; 
+        position: fixed; 
+        top: 0; 
+        left: 0; 
+        z-index: 0; 
+        transform: scaleX(-1);
+    }
+
+    #time-log {
+      position: absolute;
+      font-size: 12px;
+      font-family: sans-serif;
+      padding: 5px;
+      border-radius: 3px;
+      background-color: rgba(200, 200, 200, 0.1);
+      color: lavender;
+      bottom: 10px;
+      right: 10px;
+    }
+
+    #hud-ring, #hud-ring-inner {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 2;
+    }
+
+    #hud-ring-inner {
+      z-index: 1;
+    }
+
+    #on-screen-controls {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      z-index: 10;
+    }
+
+    #on-screen-controls button {
+      display: block;
+      margin: 5px;
+    }
+  </style>
+
+  <script src="//unpkg.com/three"></script>
+  <script src="//unpkg.com/satellite.js/dist/satellite.min.js"></script>
+  <script src="//unpkg.com/globe.gl"></script>
+</head>
+
+<body>
+  <video id="camera-feed" autoplay playsinline></video>
+  <div id="voice-commands-log" style="position: absolute; top: 0; left: 0; width: 100%; background-color: rgba(255, 255, 255, 0.8); color: black; text-align: center; padding: 10px;">
+    <span id="latest-command">Voice Commands Log</span>
+  </div>
+  <div id="chart"></div>
+  <div id="time-log"></div>
+
+  <div id="hud">
+    <img src="hud-ring.png" id="hud-ring" />
+    <img src="hud-ring-inner.png" id="hud-ring-inner"/>
+  </div>
+
+  <div id="on-screen-controls">
+    <!-- These buttons can be removed if voice control is sufficient -->
+    <button id="up-btn">&#8593; Up</button>
+    <button id="down-btn">&#8595; Down</button>
+    <button id="left-btn">&#8592; Left</button>
+    <button id="right-btn">&#8594; Right</button>
+    <button id="zoom-in-btn">Zoom In</button>
+    <button id="zoom-out-btn">Zoom Out</button>
+  </div>
+
+  <script>
+    const EARTH_RADIUS_KM = 6371;
+    const SAT_SIZE = 100;
+    const TIME_STEP = 3 * 1000;
+
+    let cameraRotation = { pitch: 0, yaw: 0, roll: 0 };
+    const rotationStep = 0.5; // Adjust as needed for sensitivity
+
+    const timeLogger = document.getElementById('time-log');
+    let currentLat = 0;
+    let currentLng = 0;
+    const moveStep = 50;
+    let currentZoom = 3.5; // Initial zoom level
+    const zoomStep = 1;
+
+    const world = Globe()(document.getElementById('chart'))
+      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
+      .objectLat('lat')
+      .objectLng('lng')
+      .objectAltitude('alt')
+      .objectFacesSurface(false)
+      .backgroundColor('rgba(0,0,0,0)')
+      .objectLabel('name');
+
+    function updateGlobeView() {
+      world.pointOfView({ lat: currentLat, lng: currentLng, altitude: currentZoom }, 1000);
+    }
+
+    function flashCommandLog() {
+      const logElement = document.getElementById('voice-commands-log');
+      logElement.style.backgroundColor = 'red';
+      setTimeout(() => {
+        logElement.style.backgroundColor = 'transparent';
+      }, 500); // Change back to transparent after 500 milliseconds
+    }
+
+    function resetGlobe() {
+      // Reset latitude, longitude, and zoom to their initial values
+      currentLat = 0;
+      currentLng = 0;
+      currentZoom = 3.5; // Set this to your desired default zoom level
+
+      // Reset camera rotation
+      cameraRotation = { pitch: 0, yaw: 0, roll: 0 };
+      updateCameraRotation();
+
+      // Update the globe view to reflect the reset values
+      updateGlobeView();
+    }
+
+    function moveUp() { currentLat = Math.min(currentLat + moveStep, 90); updateGlobeView(); }
+    function moveDown() { currentLat = Math.max(currentLat - moveStep, -90); updateGlobeView(); }
+    function moveLeft() { currentLng -= moveStep; updateGlobeView(); }
+    function moveRight() { currentLng += moveStep; updateGlobeView(); }
+    function zoomIn() { currentZoom = Math.max(1, currentZoom - zoomStep); updateGlobeView(); }
+    function zoomOut() { currentZoom = Math.min(10, currentZoom + zoomStep); updateGlobeView(); }
+
+    function shiftLeft() {
+      const distance = world.camera().position.distanceTo(world.scene().position);
+      world.camera().translateX(-distance * 0.1);
+      updateGlobeView();
+    }
+
+    function shiftRight() {
+      const distance = world.camera().position.distanceTo(world.scene().position);
+      world.camera().translateX(distance * 0.1);
+      updateGlobeView();
+    }
+
+    function shiftUp() {
+      const distance = world.camera().position.distanceTo(world.scene().position);
+      world.camera().translateY(distance * 0.1);
+      updateGlobeView();
+    }
+
+    function shiftDown() {
+      const distance = world.camera().position.distanceTo(world.scene().position);
+      world.camera().translateY(-distance * 0.1);
+      updateGlobeView();
+    }
+
+    function pitchUp() {
+      cameraRotation.pitch += rotationStep;
+      updateCameraRotation();
+      updateGlobeView();
+    }
+
+    function pitchDown() {
+      cameraRotation.pitch -= rotationStep;
+      updateCameraRotation();
+      updateGlobeView();
+    }
+
+    function yawLeft() {
+      cameraRotation.yaw += rotationStep;
+      updateCameraRotation();
+      updateGlobeView();
+    }
+
+    function yawRight() {
+      cameraRotation.yaw -= rotationStep;
+      updateCameraRotation();
+      updateGlobeView();
+    }
+
+    function rollLeft() {
+      cameraRotation.roll += rotationStep;
+      updateCameraRotation();
+      updateGlobeView();
+    }
+
+    function rollRight() {
+      cameraRotation.roll -= rotationStep;
+      updateCameraRotation();
+      updateGlobeView();
+    }
+
+    function updateCameraRotation() {
+      const { pitch, yaw, roll } = cameraRotation;
+      world.camera().rotation.set(pitch, yaw, roll);
+      updateGlobeView();
+    }
+
+    document.getElementById('up-btn').addEventListener('click', moveUp);
+    document.getElementById('down-btn').addEventListener('click', moveDown);
+    document.getElementById('left-btn').addEventListener('click', moveLeft);
+    document.getElementById('right-btn').addEventListener('click', moveRight);
+    document.getElementById('zoom-in-btn').addEventListener('click', zoomIn);
+    document.getElementById('zoom-out-btn').addEventListener('click', zoomOut);
+
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+          const video = document.getElementById('camera-feed');
+          video.srcObject = stream;
+          video.onloadedmetadata = () => { video.play(); };
+      })
+      .catch(err => { console.error("Error accessing camera: ", err); });
+
+    setTimeout(() => world.pointOfView({ altitude: 3.5 }));
+
+    const satGeometry = new THREE.OctahedronGeometry(SAT_SIZE * world.getGlobeRadius() / EARTH_RADIUS_KM / 2, 0);
+    const satMaterial = new THREE.MeshLambertMaterial({ color: 'palegreen', transparent: true, opacity: 0.7 });
+    world.objectThreeObject(() => new THREE.Mesh(satGeometry, satMaterial));
+
+    fetch('//globe.gl/example/datasets/space-track-leo.txt').then(r => r.text()).then(rawData => {
+      const tleData = rawData.replace(/\r/g, '')
+        .split(/\n(?=[^12])/)
+        .filter(d => d)
+        .map(tle => tle.split('\n'));
+      const satData = tleData.map(([name, ...tle]) => ({
+        satrec: satellite.twoline2satrec(...tle),
+        name: name.trim().replace(/^0 /, '')
+      }))
+      .filter(d => !!satellite.propagate(d.satrec, new Date()).position)
+      .slice(0, 2000);
+
+      let time = new Date();
+      (function frameTicker() {
+        requestAnimationFrame(frameTicker);
+
+        time = new Date(+time + TIME_STEP);
+        timeLogger.innerText = time.toString();
+
+        const gmst = satellite.gstime(time);
+        satData.forEach(d => {
+          const eci = satellite.propagate(d.satrec, time);
+          if (eci.position) {
+            const gdPos = satellite.eciToGeodetic(eci.position, gmst);
+            d.lat = satellite.radiansToDegrees(gdPos.latitude);
+            d.lng = satellite.radiansToDegrees(gdPos.longitude);
+            d.alt = gdPos.height / EARTH_RADIUS_KM;
+          }
+        });
+
+        world.objectsData(satData);
+      })();
+    });
+
+    // Define recognition as a global variable
+    let recognition;
+
+    if ('webkitSpeechRecognition' in window) {
+      recognition = new webkitSpeechRecognition();
+      recognition.continuous = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = function(event) {
+        const last = event.results.length - 1;
+        const command = event.results[last][0].transcript.trim().toLowerCase();
+
+        console.log('Voice command received:', command); // Log received command for debugging
+
+        // Update and flash the voice commands log
+        document.getElementById('latest-command').textContent = `Last Command: ${command}`;
+        flashCommandLog();
+        
+        switch (command) {
+          case 'up':
+            moveUp();
+            break;
+          case 'down':
+            moveDown();
+            break;
+          case 'left':
+            moveLeft();
+            break;
+          case 'right':
+            moveRight();
+            break;
+          case 'zoom in':
+            zoomIn();
+            break;
+          case 'zoom out':
+            zoomOut();
+            break;
+          case 'shift left':
+            shiftLeft();
+              break;
+          case 'shift right':
+            shiftRight();
+            break;
+          case 'shift up':
+            shiftUp();
+            break;
+          case 'shift down':
+            shiftDown();
+            break;
+          case 'pitch up':
+            pitchUp();
+            break;
+          case 'pitch down':
+            pitchDown();
+            break;
+          case 'yaw left':
+            yawLeft();
+            break;
+          case 'yaw right':
+            yawRight();
+            break;
+          case 'roll left':
+            rollLeft();
+            break;
+          case 'roll right':
+            rollRight();
+            break;
+          case 'reset':
+            resetGlobe();
+            break;
+          default:
+            console.error('Unrecognized command:', command);
+        }
+      };
+
+      
+      recognition.onerror = function(event) {
+        console.error('Speech recognition error:', event.error);
+      };
+
+      recognition.onend = function() {
+        console.log('Speech recognition service disconnected');
+        recognition.start(); // Restart recognition when it ends
+      };
+
+      recognition.start();
+    } else {
+      console.error('webkitSpeechRecognition is not available in this browser.');
+    }
+  </script>
+</body>
